@@ -8,7 +8,7 @@ import argparse
 parser = argparse.ArgumentParser()
  
 # Adding optional argument
-parser.add_argument("-i", "--input", help = "input as hexstring e.g. 'FEEDBEEF'. A dummy input can be used for testing with the -v option")
+parser.add_argument("-i", "--input", help = "input as hexstring e.g. 'FEEDBEEF'. A dummy input can be used for testing with the -d option")
 parser.add_argument("-f", "--filter", help = "filter output on package type. More than one can be added using a space between. Not used if -ot is 'hexdump' or 'pcap' (default is 'its')")
 parser.add_argument("-ot", "--outputtype", help = "Selects output type. values can be 'hexdump','pcap', 'json', or any output type tshark supports (default is 'json')")
 parser.add_argument("-o", "--outputfile", help = "name of output file (defaults to printing to stdout unless using -ot 'pcap')")
