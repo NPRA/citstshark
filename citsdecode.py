@@ -8,7 +8,7 @@ import argparse
 parser = argparse.ArgumentParser()
  
 # Adding optional argument
-parser.add_argument("-i", "--input", help = "input as hexstring e.g. 'FEEDBEEF'. A dummy input can be used for testing with the -d option")
+parser.add_argument("-i", "--input", help = "input as hexstring e.g. 'FEEDBEEF'. A dummy input can be used for testing with the -v option")
 parser.add_argument("-f", "--filter", help = "filter output on package type. More than one can be added using a space between. Not used if -ot is 'hexdump' or 'pcap' (default is 'its')")
 parser.add_argument("-ot", "--outputtype", help = "Selects output type. values can be 'hexdump','pcap', 'json', or any output type tshark supports (default is 'json')")
 parser.add_argument("-o", "--outputfile", help = "name of output file (defaults to printing to stdout unless using -ot 'pcap')")
@@ -49,35 +49,88 @@ def valInHex(val):
 def shortValInHex(val):
     return struct.pack("<H",int(val)).hex()
 
-hexPadding = align32bitPadding(hexEth+hexGN)
+import sys
+import binascii
 
-headType = "0A0D0D0A"
-headlen = "20000000"
-headMagic = "4D3C2B1A"
-headVersion = "0100 0000"
-headSecLen = "FF FF FF FF FF FF FF FF"
-headOpt = "00 00 00 00"
-IDBtype = "01 00 00 00"
-IDBlen = "43 00 00 00" #0x44
-IDBlinkType = "01 00" + "00 00" # eth + reserved
-IDBsnaplen = "00 00 00 00" # 0=no limit
-IFname = "Dummy interchange IF"
-IFnameHex = IFname.encode("utf-8").hex()
-IDBopt = "02 00"+shortValInHex(int(len(IFnameHex.replace(' ',''))/2))+IFnameHex+align32bitPadding(IFnameHex)     #"02 00"+"1D 00"+"46616B652049462C20496D706F72742066726F6D204865782044756D70 00 00 00" # if_name + nameLen(29) + name(Fake IF, Import from Hex Dump) + padding to 32bits
-IDBif_tsresol = "090001000900000000000000"
-IDBlen = sizeInHex(IDBtype+IDBlen+IDBlinkType+IDBsnaplen+IDBopt+IDBif_tsresol+IDBlen)
-pcapblocktype = "06 00 00 00" # EPB
-pcapBlockLen = valInHex(int(len((hexEth+hexGN).replace(' ',''))/2)+33) #"08 02 00 00" #33(0x21)+payloadlen
-pcapIfaceId = "00 00 00 00"
-pcapTime = "00 00 00 00 00 00 00 00"
-pcaplen = sizeInHex(hexEth+hexGN)#"E7 01 00 00" #487
+## BASIC PCAP GENERATOR BY: RPGillespie (https://www.codeproject.com/Tips/612847/Generate-a-quick-and-easy-custom-pcap-file-using-P)
 
-test = IFname.encode("utf-8").hex()
+#Global header for pcap 2.4
+pcap_global_header =   ('D4 C3 B2 A1'   
+                        '02 00'         #File format major revision (i.e. pcap <2>.4)  
+                        '04 00'         #File format minor revision (i.e. pcap 2.<4>)   
+                        '00 00 00 00'     
+                        '00 00 00 00'     
+                        'FF FF 00 00'     
+                        '01 00 00 00')
 
-head = headType+headlen+headMagic+headVersion+headSecLen+headOpt+headlen
-IDB = IDBtype+IDBlen+IDBlinkType+IDBsnaplen+IDBopt+IDBif_tsresol+IDBlen
-EPB = pcapblocktype+pcapBlockLen+pcapIfaceId+pcapTime+pcaplen+pcaplen+hexEth+hexGN+hexPadding+pcapBlockLen
-hexr = head+IDB+EPB
+#pcap packet header that must preface every packet
+pcap_packet_header =   ('AA 77 9F 47'     
+                        '90 A2 04 00'     
+                        'XX XX XX XX'   #Frame Size (little endian) 
+                        'YY YY YY YY')  #Frame Size (little endian)
+
+eth_header =   ('00 00 00 00 00 00'     #Source Mac    
+                '00 00 00 00 00 00'     #Dest Mac  
+                '89 47')                #Protocol (0x0800 = IP)
+
+ip_header =    ('45'                    #IP version and header length (multiples of 4 bytes)   
+                '00'                      
+                'XX XX'                 #Length - will be calculated and replaced later
+                '00 00'                   
+                '40 00 40'                
+                '11'                    #Protocol (0x11 = UDP)          
+                'YY YY'                 #Checksum - will be calculated and replaced later      
+                '7F 00 00 01'           #Source IP (Default: 127.0.0.1)         
+                '7F 00 00 01')          #Dest IP (Default: 127.0.0.1) 
+
+udp_header =   ('80 01'                   
+                'XX XX'                 #Port - will be replaced later                   
+                'YY YY'                 #Length - will be calculated and replaced later        
+                '00 00')
+                
+def getByteLength(str1):
+    return len(''.join(str1.split())) / 2
+
+def writeByteStringToFile(bytestring, filename):
+    bytelist = bytestring.split()  
+    bytes = binascii.a2b_hex(''.join(bytelist))
+    bitout = open(filename, 'wb')
+    bitout.write(bytes)
+
+def generatePCAP(message,port): 
+
+    pcap_len = int(getByteLength(message) + getByteLength(eth_header))
+    
+    hex_str = "%08x"%pcap_len
+    reverse_hex_str = hex_str[6:] + hex_str[4:6] + hex_str[2:4] + hex_str[:2]
+    pcaph = pcap_packet_header.replace('XX XX XX XX',reverse_hex_str)
+    pcaph = pcaph.replace('YY YY YY YY',reverse_hex_str)
+
+    bytestring = pcap_global_header + pcaph + eth_header + message
+    return bytestring
+
+#Splits the string into a list of tokens every n characters
+def splitN(str1,n):
+    return [str1[start:start+n] for start in range(0, len(str1), n)]
+
+#Calculates and returns the IP checksum based on the given IP Header
+def ip_checksum(iph):
+
+    #split into bytes    
+    words = splitN(''.join(iph.split()),4)
+
+    csum = 0;
+    for word in words:
+        csum += int(word, base=16)
+
+    csum += (csum >> 16)
+    csum = csum & 0xFFFF ^ 0xFFFF
+
+    return csum
+
+hexr = generatePCAP(hexGN, 1234).replace(' ','')
+
+#print("inlen(Bytes): ",len(hexGN)/2)
 #print(hexr)
 bindata = bytearray.fromhex(hexr)#binascii.a2b_hex(hexr)
 #print(bindata)
